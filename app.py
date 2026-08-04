@@ -2,19 +2,16 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
-import calendar
-import io
 
 # 1. KONFIGURACJA STRONY I ZMIENNE
 st.set_page_config(page_title="Grafik Ekipy", layout="wide", initial_sidebar_state="expanded")
 
 EKIPA = ["Michał", "Tomek", "Kamil", "Marek", "Łukasz"]
+ETAPY = ["Montaż", "Realizacja", "Demontaż"]
 
-# 2. INICJALIZACJA RELACYJNEJ BAZY DANYCH
-conn = sqlite3.connect('montaze_v3.db', check_same_thread=False)
+# 2. BAZA DANYCH
+conn = sqlite3.connect('montaze_v4.db', check_same_thread=False)
 c = conn.cursor()
-
-# Tabela główna - Wydarzenia
 c.execute('''
     CREATE TABLE IF NOT EXISTS wydarzenia (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +20,6 @@ c.execute('''
         data_do DATE
     )
 ''')
-# Tabela podrzędna - Harmonogram z kluczem obcym
 c.execute('''
     CREATE TABLE IF NOT EXISTS harmonogram (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,204 +32,228 @@ c.execute('''
 ''')
 conn.commit()
 
-# 3. ZARZĄDZANIE STANEM (Nawigacja po czasie)
-if 'current_date' not in st.session_state:
-    st.session_state.current_date = datetime.now()
-
-def change_week(days):
-    st.session_state.current_date += timedelta(days=days)
-
-def go_today():
-    st.session_state.current_date = datetime.now()
-
-today = st.session_state.current_date
-start_of_week = today - timedelta(days=today.weekday())
-dates_of_week = [start_of_week + timedelta(days=i) for i in range(7)]
-month_name = calendar.month_name[today.month]
-year = today.year
-
-# 4. CUSTOM CSS (Material Design, Ciemny motyw)
+# 3. CSS - ŚWIECĄCE KAFELKI I KARTY WYDARZEŃ
 st.markdown("""
 <style>
     .stApp { background-color: #0f172a; color: #e2e8f0; }
     header {visibility: hidden;}
     
-    .schedule-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    .event-card {
         background-color: #1e293b;
-        border-radius: 10px;
-        overflow: hidden;
-        margin-top: 20px;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    .schedule-table th {
-        background-color: #0f172a;
-        color: #94a3b8;
-        font-size: 12px;
-        text-transform: uppercase;
-        padding: 15px;
-        border-bottom: 1px solid #334155;
-    }
-    .schedule-table td {
-        padding: 8px 10px;
-        border-bottom: 1px solid #334155;
-        text-align: center;
-        font-size: 14px;
-        color: #cbd5e1;
-        vertical-align: top;
-    }
-    .schedule-table .row-header {
-        text-align: left;
+    .event-title {
+        color: #f8fafc;
+        margin-top: 0;
+        margin-bottom: 5px;
+        font-size: 22px;
         font-weight: 600;
-        color: #38bdf8;
-        vertical-align: middle;
+    }
+    .event-dates {
+        color: #94a3b8;
+        font-size: 14px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
     
-    /* Kafelki (Pills) */
-    .pill {
-        display: block;
-        padding: 4px 8px;
-        margin: 4px auto;
-        border-radius: 6px;
-        font-size: 11px;
+    .grid-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+    }
+    .grid-table th {
+        color: #64748b;
+        font-size: 12px;
+        text-transform: uppercase;
+        font-weight: 600;
+        text-align: center;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #334155;
+    }
+    .grid-table th:first-child { text-align: left; }
+    
+    .grid-table td {
+        background-color: #0f172a;
+        padding: 12px;
+        text-align: center;
+        vertical-align: middle;
+    }
+    .grid-table td:first-child {
+        text-align: left;
+        border-top-left-radius: 8px;
+        border-bottom-left-radius: 8px;
+        font-weight: 500;
+        color: #cbd5e1;
+        width: 20%;
+    }
+    .grid-table td:last-child {
+        border-top-right-radius: 8px;
+        border-bottom-right-radius: 8px;
+    }
+    
+    /* Główne Kafelki */
+    .glow-pill {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 13px;
         font-weight: bold;
-        min-width: 80px;
-        max-width: 100px;
         text-align: center;
         letter-spacing: 0.5px;
+        margin: 2px;
     }
-    .pill-montaz { background-color: #3b82f6; color: white; } 
-    .pill-realizacja { background-color: #f59e0b; color: white; } 
-    .pill-demontaz { background-color: #ef4444; color: white; } 
-    .pill-off { background-color: #334155; color: #64748b; font-weight: normal;} 
+    .glow-montaz { 
+        background-color: rgba(59, 130, 246, 0.2); 
+        color: #60a5fa; 
+        border: 1px solid #3b82f6;
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+    } 
+    .glow-realizacja { 
+        background-color: rgba(245, 158, 11, 0.2); 
+        color: #fbbf24; 
+        border: 1px solid #f59e0b;
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+    } 
+    .glow-demontaz { 
+        background-color: rgba(239, 68, 68, 0.2); 
+        color: #f87171; 
+        border: 1px solid #ef4444;
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+    } 
+    .pill-dim { 
+        background-color: transparent; 
+        color: #334155; 
+        border: 1px dashed #334155;
+    } 
+    
+    .date-tag {
+        font-size: 10px;
+        opacity: 0.8;
+        display: block;
+        margin-top: 2px;
+        font-weight: normal;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# 5. HEADER (Nawigacja)
-col1, col2, col3 = st.columns([1, 2, 1])
 
-with col2:
-    st.markdown(f"<h3 style='text-align: center; color: white;'>{month_name} {year}</h3>", unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1])
-    with c2: st.button("❮ Poprzedni", on_click=change_week, args=(-7,))
-    with c3: st.button("DZIŚ", on_click=go_today, use_container_width=True)
-    with c4: st.button("Następny ❯", on_click=change_week, args=(7,))
+# 4. POBRANIE DANYCH
+df_wydarzenia = pd.read_sql("SELECT * FROM wydarzenia ORDER BY data_od ASC", conn)
+df_harmonogram = pd.read_sql("SELECT * FROM harmonogram", conn)
 
-# Pobranie połączonych danych (JOIN)
-start_str = dates_of_week[0].strftime("%Y-%m-%d")
-end_str = dates_of_week[6].strftime("%Y-%m-%d")
-query = f"""
-    SELECT h.id, w.nazwa, h.osoba, h.data, h.etap 
-    FROM harmonogram h
-    JOIN wydarzenia w ON h.wydarzenie_id = w.id
-    WHERE h.data BETWEEN '{start_str}' AND '{end_str}'
-"""
-df = pd.read_sql(query, conn)
+# 5. WIDOK GŁÓWNY - KARTY WYDARZEŃ
+st.markdown("<h2 style='text-align: center; color: white; margin-bottom: 40px;'>🛠️ Zarządzanie Ekipą</h2>", unsafe_allow_html=True)
 
-# Eksport
-with col3:
-    if not df.empty:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Grafik')
-        excel_data = output.getvalue()
-        st.download_button("📥 Pobierz Excel", data=excel_data, file_name=f"Grafik_{start_str}.xlsx", mime="application/vnd.ms-excel")
-
-# 6. GENEROWANIE TABELI HTML
-days_headers = "".join([f"<th>{d.strftime('%a')}<br><span style='font-size:10px; color:#64748b;'>{d.strftime('%d.%m')}</span></th>" for d in dates_of_week])
-
-html_table = f"""
-<table class="schedule-table">
-    <thead>
-        <tr>
-            <th style="text-align: left;">WYDARZENIE</th>
-            <th style="text-align: left;">EKIPA</th>
-            {days_headers}
-        </tr>
-    </thead>
-    <tbody>
-"""
-
-if df.empty:
-    html_table += "<tr><td colspan='9' style='text-align:center; padding:30px;'>Brak wpisów w tym tygodniu.</td></tr>"
+if df_wydarzenia.empty:
+    st.info("Brak zaplanowanych wydarzeń. Dodaj pierwsze z lewej strony.")
 else:
-    wydarzenia_unikalne = df['nazwa'].unique()
-    for wyd in wydarzenia_unikalne:
-        df_wyd = df[df['nazwa'] == wyd]
-        osoby = df_wyd['osoba'].unique()
+    for _, wyd in df_wydarzenia.iterrows():
+        wyd_id = wyd['id']
+        nazwa = wyd['nazwa']
+        # Formatowanie daty dla estetyki
+        d_od = datetime.strptime(wyd['data_od'], "%Y-%m-%d").strftime("%d.%m.%Y")
+        d_do = datetime.strptime(wyd['data_do'], "%Y-%m-%d").strftime("%d.%m.%Y")
         
-        for idx, osoba in enumerate(osoby):
-            html_table += "<tr>"
-            if idx == 0:
-                html_table += f"<td rowspan='{len(osoby)}' class='row-header'>{wyd}</td>"
+        # Filtrujemy harmonogram tylko dla tego wydarzenia
+        harm_wyd = df_harmonogram[df_harmonogram['wydarzenie_id'] == wyd_id]
+        
+        # Nagłówki kolumn tabeli (Osoba + 3 Etapy)
+        html_table = f"""
+        <div class="event-card">
+            <h3 class="event-title">📍 {nazwa}</h3>
+            <div class="event-dates">📅 {d_od} - {d_do}</div>
             
-            html_table += f"<td style='text-align: left; vertical-align: middle;'>{osoba}</td>"
+            <table class="grid-table">
+                <thead>
+                    <tr>
+                        <th>Ekipa</th>
+                        <th>Montaż</th>
+                        <th>Realizacja</th>
+                        <th>Demontaż</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+        
+        # Generowanie wierszy dla całej zdefiniowanej ekipy
+        for osoba in EKIPA:
+            html_table += f"<tr><td>{osoba}</td>"
             
-            for d in dates_of_week:
-                d_str = d.strftime("%Y-%m-%d")
-                wpisy_dnia = df_wyd[(df_wyd['osoba'] == osoba) & (df_wyd['data'] == d_str)]
+            wpisy_osoby = harm_wyd[harm_wyd['osoba'] == osoba]
+            
+            # Sprawdzamy każdy etap dla danej osoby na to wydarzenie
+            for etap in ETAPY:
+                wpisy_etapu = wpisy_osoby[wpisy_osoby['etap'] == etap]
                 
-                if not wpisy_dnia.empty:
-                    pills_html = ""
-                    for _, row in wpisy_dnia.iterrows():
-                        etap = row['etap']
-                        if etap == 'Montaż': pill_class = 'pill-montaz'
-                        elif etap == 'Realizacja': pill_class = 'pill-realizacja'
-                        elif etap == 'Demontaż': pill_class = 'pill-demontaz'
-                        else: pill_class = 'pill-off'
-                        pills_html += f"<div class='pill {pill_class}'>{etap.upper()}</div>"
+                if not wpisy_etapu.empty:
+                    # Osoba przypisana do tego etapu (może być kilka dni, więc grupujemy kafelki)
+                    pills = ""
+                    if etap == 'Montaż': class_name = "glow-montaz"
+                    elif etap == 'Realizacja': class_name = "glow-realizacja"
+                    else: class_name = "glow-demontaz"
                     
-                    html_table += f"<td>{pills_html}</td>"
+                    for _, w in wpisy_etapu.iterrows():
+                        # Wyciągamy sam dzień i miesiąc do wyświetlenia pod kafelkiem
+                        data_short = datetime.strptime(w['data'], "%Y-%m-%d").strftime("%d.%m")
+                        pills += f"<div class='glow-pill {class_name}'>{etap.upper()}<span class='date-tag'>{data_short}</span></div>"
+                    
+                    html_table += f"<td>{pills}</td>"
                 else:
-                    html_table += "<td><div class='pill pill-off'>-</div></td>"
+                    # Osoba wolna / nieprzypisana na ten etap
+                    html_table += f"<td><div class='glow-pill pill-dim'>-</div></td>"
                     
             html_table += "</tr>"
+            
+        html_table += """
+                </tbody>
+            </table>
+        </div>
+        """
+        
+        st.markdown(html_table, unsafe_allow_html=True)
 
-html_table += "</tbody></table>"
-st.markdown(html_table, unsafe_allow_html=True)
 
-
-# 7. PANEL BOCZNY - ZAKŁADKI UX
+# 6. PANEL BOCZNY - ZAKŁADKI UX
 tab1, tab2 = st.sidebar.tabs(["📝 Planowanie", "⚙️ Zarządzanie"])
 
 with tab1:
     st.markdown("### 1. Utwórz Wydarzenie")
     with st.form("form_wydarzenie", clear_on_submit=True):
-        nazwa_wyd = st.text_input("Nazwa wydarzenia", placeholder="np. Festiwal - Scena Główna (Line Array)")
+        nazwa_wyd = st.text_input("Nazwa / Miejsce", placeholder="np. Spodek - FOH / System")
         col_od, col_do = st.columns(2)
-        with col_od: data_od = st.date_input("Od", today)
-        with col_do: data_do = st.date_input("Do", today + timedelta(days=2))
+        with col_od: data_od = st.date_input("Od", datetime.today())
+        with col_do: data_do = st.date_input("Do", datetime.today() + timedelta(days=2))
         
         if st.form_submit_button("Dodaj do bazy"):
             if nazwa_wyd and data_od <= data_do:
                 c.execute("INSERT INTO wydarzenia (nazwa, data_od, data_do) VALUES (?, ?, ?)", (nazwa_wyd, str(data_od), str(data_do)))
                 conn.commit()
-                st.success("Dodano wydarzenie!")
                 st.rerun()
             else:
                 st.error("Błędne daty lub brak nazwy.")
 
     st.markdown("---")
     st.markdown("### 2. Obsadź Ekipę")
-    wszystkie_wyd = pd.read_sql("SELECT * FROM wydarzenia ORDER BY data_od DESC", conn)
-    
-    if not wszystkie_wyd.empty:
-        wyd_dict = {row['id']: f"{row['nazwa']} ({row['data_od']} do {row['data_do']})" for _, row in wszystkie_wyd.iterrows()}
-        wybrane_wyd_id = st.selectbox("Wybierz wydarzenie z bazy", options=list(wyd_dict.keys()), format_func=lambda x: wyd_dict[x])
+    if not df_wydarzenia.empty:
+        wyd_dict = {row['id']: f"{row['nazwa']} ({row['data_od']} - {row['data_do']})" for _, row in df_wydarzenia.iterrows()}
+        wybrane_wyd_id = st.selectbox("Wybierz wydarzenie", options=list(wyd_dict.keys()), format_func=lambda x: wyd_dict[x])
         
-        # Pobranie limitów dat dla wybranego wydarzenia, żeby zablokować kalendarz
-        wyd_info = wszystkie_wyd[wszystkie_wyd['id'] == wybrane_wyd_id].iloc[0]
+        wyd_info = df_wydarzenia[df_wydarzenia['id'] == wybrane_wyd_id].iloc[0]
         start_d = datetime.strptime(wyd_info['data_od'], "%Y-%m-%d").date()
         end_d = datetime.strptime(wyd_info['data_do'], "%Y-%m-%d").date()
         
         with st.form("form_obsada", clear_on_submit=True):
-            osoba = st.selectbox("Osoba z ekipy", EKIPA)
-            # Kalendarz ograniczony do czasu trwania wydarzenia
-            data_przydzialu = st.date_input("Wybierz dzień", value=start_d, min_value=start_d, max_value=end_d)
-            etapy = st.multiselect("Zadanie (można wiele)", ["Montaż", "Realizacja", "Demontaż"])
+            osoba = st.selectbox("Osoba", EKIPA)
+            data_przydzialu = st.date_input("Dzień", value=start_d, min_value=start_d, max_value=end_d)
+            etapy = st.multiselect("Zadanie na ten dzień", ETAPY)
             
-            if st.form_submit_button("Zapisz w harmonogramie"):
+            if st.form_submit_button("Zapisz przydział"):
                 if etapy:
                     for e in etapy:
                         c.execute("INSERT INTO harmonogram (wydarzenie_id, osoba, data, etap) VALUES (?, ?, ?, ?)",
@@ -243,10 +263,10 @@ with tab1:
                 else:
                     st.error("Wybierz co najmniej jeden etap!")
     else:
-        st.info("Najpierw utwórz wydarzenie w punkcie 1.")
+        st.info("Najpierw utwórz wydarzenie wyżej.")
 
 with tab2:
-    st.markdown("### 🗑️ Usuń wpis z grafiku")
+    st.markdown("### 🗑️ Usuń przydział")
     wszystkie_wpisy = pd.read_sql("""
         SELECT h.id, w.nazwa, h.data, h.osoba, h.etap 
         FROM harmonogram h 
@@ -257,16 +277,16 @@ with tab2:
     if not wszystkie_wpisy.empty:
         opcje = {row['id']: f"{row['data']} | {row['nazwa']} ({row['osoba']} - {row['etap']})" for _, row in wszystkie_wpisy.iterrows()}
         wpis_del = st.selectbox("Wybierz wpis", options=list(opcje.keys()), format_func=lambda x: opcje[x])
-        if st.button("Usuń przypisanie"):
+        if st.button("Usuń przydział"):
             c.execute("DELETE FROM harmonogram WHERE id = ?", (wpis_del,))
             conn.commit()
             st.rerun()
             
     st.markdown("---")
-    st.markdown("### ⚠️ Usuń całe wydarzenie")
-    if not wszystkie_wyd.empty:
+    st.markdown("### ⚠️ Usuń wydarzenie")
+    if not df_wydarzenia.empty:
         wyd_del = st.selectbox("Wybierz wydarzenie", options=list(wyd_dict.keys()), format_func=lambda x: wyd_dict[x], key="wyd_del")
-        if st.button("Usuń wydarzenie (skasuje też grafiki!)"):
+        if st.button("Usuń całkowicie"):
             c.execute("DELETE FROM wydarzenia WHERE id = ?", (wyd_del,))
             c.execute("DELETE FROM harmonogram WHERE wydarzenie_id = ?", (wyd_del,))
             conn.commit()
