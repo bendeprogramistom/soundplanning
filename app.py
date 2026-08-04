@@ -156,67 +156,46 @@ else:
     for _, wyd in df_wydarzenia.iterrows():
         wyd_id = wyd['id']
         nazwa = wyd['nazwa']
-        # Formatowanie daty dla estetyki
         d_od = datetime.strptime(wyd['data_od'], "%Y-%m-%d").strftime("%d.%m.%Y")
         d_do = datetime.strptime(wyd['data_do'], "%Y-%m-%d").strftime("%d.%m.%Y")
         
-        # Filtrujemy harmonogram tylko dla tego wydarzenia
         harm_wyd = df_harmonogram[df_harmonogram['wydarzenie_id'] == wyd_id]
         
-        # Nagłówki kolumn tabeli (Osoba + 3 Etapy)
-        html_table = f"""
-        <div class="event-card">
-            <h3 class="event-title">📍 {nazwa}</h3>
-            <div class="event-dates">📅 {d_od} - {d_do}</div>
-            
-            <table class="grid-table">
-                <thead>
-                    <tr>
-                        <th>Ekipa</th>
-                        <th>Montaż</th>
-                        <th>Realizacja</th>
-                        <th>Demontaż</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
+        # NOWY SPOSÓB BUDOWANIA HTML - bez wcięć psujących Markdowna
+        html = ""
+        html += "<div class='event-card'>"
+        html += f"<h3 class='event-title'>📍 {nazwa}</h3>"
+        html += f"<div class='event-dates'>📅 {d_od} - {d_do}</div>"
+        html += "<table class='grid-table'>"
+        html += "<thead><tr><th>Ekipa</th><th>Montaż</th><th>Realizacja</th><th>Demontaż</th></tr></thead>"
+        html += "<tbody>"
         
-        # Generowanie wierszy dla całej zdefiniowanej ekipy
         for osoba in EKIPA:
-            html_table += f"<tr><td>{osoba}</td>"
-            
+            html += f"<tr><td>{osoba}</td>"
             wpisy_osoby = harm_wyd[harm_wyd['osoba'] == osoba]
             
-            # Sprawdzamy każdy etap dla danej osoby na to wydarzenie
             for etap in ETAPY:
                 wpisy_etapu = wpisy_osoby[wpisy_osoby['etap'] == etap]
                 
                 if not wpisy_etapu.empty:
-                    # Osoba przypisana do tego etapu (może być kilka dni, więc grupujemy kafelki)
                     pills = ""
                     if etap == 'Montaż': class_name = "glow-montaz"
                     elif etap == 'Realizacja': class_name = "glow-realizacja"
                     else: class_name = "glow-demontaz"
                     
                     for _, w in wpisy_etapu.iterrows():
-                        # Wyciągamy sam dzień i miesiąc do wyświetlenia pod kafelkiem
                         data_short = datetime.strptime(w['data'], "%Y-%m-%d").strftime("%d.%m")
                         pills += f"<div class='glow-pill {class_name}'>{etap.upper()}<span class='date-tag'>{data_short}</span></div>"
                     
-                    html_table += f"<td>{pills}</td>"
+                    html += f"<td>{pills}</td>"
                 else:
-                    # Osoba wolna / nieprzypisana na ten etap
-                    html_table += f"<td><div class='glow-pill pill-dim'>-</div></td>"
+                    html += "<td><div class='glow-pill pill-dim'>-</div></td>"
                     
-            html_table += "</tr>"
+            html += "</tr>"
             
-        html_table += """
-                </tbody>
-            </table>
-        </div>
-        """
+        html += "</tbody></table></div>"
         
-        st.markdown(html_table, unsafe_allow_html=True)
+        st.markdown(html, unsafe_allow_html=True)
 
 
 # 6. PANEL BOCZNY - ZAKŁADKI UX
