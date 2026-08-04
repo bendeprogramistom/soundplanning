@@ -8,20 +8,30 @@ import io
 # 1. KONFIGURACJA STRONY I ZMIENNE
 st.set_page_config(page_title="Grafik Ekipy", layout="wide", initial_sidebar_state="expanded")
 
-# --- TUTAJ DEFINIUJESZ SWOJĄ EKIPĘ NA SZTYWNO ---
-EKIPA = ["Mike", "Karol", "Marcin", "Kuba", "Mateusz", "Robert"]
-# -----------------------------------------------
+EKIPA = ["Michał", "Tomek", "Kamil", "Marek", "Łukasz"]
 
-# 2. INICJALIZACJA BAZY DANYCH
-conn = sqlite3.connect('montaze_v2.db', check_same_thread=False)
+# 2. INICJALIZACJA RELACYJNEJ BAZY DANYCH
+conn = sqlite3.connect('montaze_v3.db', check_same_thread=False)
 c = conn.cursor()
+
+# Tabela główna - Wydarzenia
 c.execute('''
     CREATE TABLE IF NOT EXISTS wydarzenia (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nazwa TEXT,
+        data_od DATE,
+        data_do DATE
+    )
+''')
+# Tabela podrzędna - Harmonogram z kluczem obcym
+c.execute('''
+    CREATE TABLE IF NOT EXISTS harmonogram (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wydarzenie_id INTEGER,
         osoba TEXT,
         data DATE,
-        etap TEXT
+        etap TEXT,
+        FOREIGN KEY(wydarzenie_id) REFERENCES wydarzenia(id)
     )
 ''')
 conn.commit()
@@ -42,7 +52,7 @@ dates_of_week = [start_of_week + timedelta(days=i) for i in range(7)]
 month_name = calendar.month_name[today.month]
 year = today.year
 
-# 4. CUSTOM CSS (Ciemny motyw, kafelki i układ wielokrotny)
+# 4. CUSTOM CSS (Material Design, Ciemny motyw)
 st.markdown("""
 <style>
     .stApp { background-color: #0f172a; color: #e2e8f0; }
@@ -80,7 +90,7 @@ st.markdown("""
         vertical-align: middle;
     }
     
-    /* Kafelki (Pills) - układ jeden pod drugim */
+    /* Kafelki (Pills) */
     .pill {
         display: block;
         padding: 4px 8px;
@@ -110,10 +120,16 @@ with col2:
     with c3: st.button("DZIŚ", on_click=go_today, use_container_width=True)
     with c4: st.button("Następny ❯", on_click=change_week, args=(7,))
 
-# Pobranie danych
+# Pobranie połączonych danych (JOIN)
 start_str = dates_of_week[0].strftime("%Y-%m-%d")
 end_str = dates_of_week[6].strftime("%Y-%m-%d")
-df = pd.read_sql(f"SELECT * FROM wydarzenia WHERE data BETWEEN '{start_str}' AND '{end_str}'", conn)
+query = f"""
+    SELECT h.id, w.nazwa, h.osoba, h.data, h.etap 
+    FROM harmonogram h
+    JOIN wydarzenia w ON h.wydarzenie_id = w.id
+    WHERE h.data BETWEEN '{start_str}' AND '{end_str}'
+"""
+df = pd.read_sql(query, conn)
 
 # Eksport
 with col3:
@@ -142,8 +158,8 @@ html_table = f"""
 if df.empty:
     html_table += "<tr><td colspan='9' style='text-align:center; padding:30px;'>Brak wpisów w tym tygodniu.</td></tr>"
 else:
-    wydarzenia = df['nazwa'].unique()
-    for wyd in wydarzenia:
+    wydarzenia_unikalne = df['nazwa'].unique()
+    for wyd in wydarzenia_unikalne:
         df_wyd = df[df['nazwa'] == wyd]
         osoby = df_wyd['osoba'].unique()
         
@@ -154,14 +170,12 @@ else:
             
             html_table += f"<td style='text-align: left; vertical-align: middle;'>{osoba}</td>"
             
-            # Kafelki dla dni
             for d in dates_of_week:
                 d_str = d.strftime("%Y-%m-%d")
                 wpisy_dnia = df_wyd[(df_wyd['osoba'] == osoba) & (df_wyd['data'] == d_str)]
                 
                 if not wpisy_dnia.empty:
                     pills_html = ""
-                    # Obsługa wielu etapów w jednym dniu
                     for _, row in wpisy_dnia.iterrows():
                         etap = row['etap']
                         if etap == 'Montaż': pill_class = 'pill-montaz'
@@ -180,36 +194,80 @@ html_table += "</tbody></table>"
 st.markdown(html_table, unsafe_allow_html=True)
 
 
-# 7. PANEL BOCZNY (Nowa logika dodawania)
-st.sidebar.markdown("### ➕ Planuj")
-with st.sidebar.form("dodaj_form", clear_on_submit=True):
-    nazwa = st.text_input("Wydarzenie / Klient")
+# 7. PANEL BOCZNY - ZAKŁADKI UX
+tab1, tab2 = st.sidebar.tabs(["📝 Planowanie", "⚙️ Zarządzanie"])
+
+with tab1:
+    st.markdown("### 1. Utwórz Wydarzenie")
+    with st.form("form_wydarzenie", clear_on_submit=True):
+        nazwa_wyd = st.text_input("Nazwa wydarzenia", placeholder="np. Festiwal - Scena Główna (Line Array)")
+        col_od, col_do = st.columns(2)
+        with col_od: data_od = st.date_input("Od", today)
+        with col_do: data_do = st.date_input("Do", today + timedelta(days=2))
+        
+        if st.form_submit_button("Dodaj do bazy"):
+            if nazwa_wyd and data_od <= data_do:
+                c.execute("INSERT INTO wydarzenia (nazwa, data_od, data_do) VALUES (?, ?, ?)", (nazwa_wyd, str(data_od), str(data_do)))
+                conn.commit()
+                st.success("Dodano wydarzenie!")
+                st.rerun()
+            else:
+                st.error("Błędne daty lub brak nazwy.")
+
+    st.markdown("---")
+    st.markdown("### 2. Obsadź Ekipę")
+    wszystkie_wyd = pd.read_sql("SELECT * FROM wydarzenia ORDER BY data_od DESC", conn)
     
-    # Wybór osoby ze sztywnej listy
-    osoba = st.selectbox("Kto (Osoba z ekipy)", EKIPA)
-    data = st.date_input("Data", today)
+    if not wszystkie_wyd.empty:
+        wyd_dict = {row['id']: f"{row['nazwa']} ({row['data_od']} do {row['data_do']})" for _, row in wszystkie_wyd.iterrows()}
+        wybrane_wyd_id = st.selectbox("Wybierz wydarzenie z bazy", options=list(wyd_dict.keys()), format_func=lambda x: wyd_dict[x])
+        
+        # Pobranie limitów dat dla wybranego wydarzenia, żeby zablokować kalendarz
+        wyd_info = wszystkie_wyd[wszystkie_wyd['id'] == wybrane_wyd_id].iloc[0]
+        start_d = datetime.strptime(wyd_info['data_od'], "%Y-%m-%d").date()
+        end_d = datetime.strptime(wyd_info['data_do'], "%Y-%m-%d").date()
+        
+        with st.form("form_obsada", clear_on_submit=True):
+            osoba = st.selectbox("Osoba z ekipy", EKIPA)
+            # Kalendarz ograniczony do czasu trwania wydarzenia
+            data_przydzialu = st.date_input("Wybierz dzień", value=start_d, min_value=start_d, max_value=end_d)
+            etapy = st.multiselect("Zadanie (można wiele)", ["Montaż", "Realizacja", "Demontaż"])
+            
+            if st.form_submit_button("Zapisz w harmonogramie"):
+                if etapy:
+                    for e in etapy:
+                        c.execute("INSERT INTO harmonogram (wydarzenie_id, osoba, data, etap) VALUES (?, ?, ?, ?)",
+                                  (wybrane_wyd_id, osoba, str(data_przydzialu), e))
+                    conn.commit()
+                    st.rerun()
+                else:
+                    st.error("Wybierz co najmniej jeden etap!")
+    else:
+        st.info("Najpierw utwórz wydarzenie w punkcie 1.")
+
+with tab2:
+    st.markdown("### 🗑️ Usuń wpis z grafiku")
+    wszystkie_wpisy = pd.read_sql("""
+        SELECT h.id, w.nazwa, h.data, h.osoba, h.etap 
+        FROM harmonogram h 
+        JOIN wydarzenia w ON h.wydarzenie_id = w.id 
+        ORDER BY h.data DESC
+    """, conn)
     
-    # Multiselect - można wybrać kilka etapów naraz
-    etapy = st.multiselect("Etap (można wybrać kilka)", ["Montaż", "Realizacja", "Demontaż"])
-    
-    if st.form_submit_button("Zapisz w grafiku"):
-        if nazwa and osoba and etapy:
-            # Zapis każdego etapu jako osobny wpis w bazie, co pozwala na generowanie wielu kafelków
-            for e in etapy:
-                c.execute("INSERT INTO wydarzenia (nazwa, osoba, data, etap) VALUES (?, ?, ?, ?)",
-                          (nazwa, osoba, str(data), e))
+    if not wszystkie_wpisy.empty:
+        opcje = {row['id']: f"{row['data']} | {row['nazwa']} ({row['osoba']} - {row['etap']})" for _, row in wszystkie_wpisy.iterrows()}
+        wpis_del = st.selectbox("Wybierz wpis", options=list(opcje.keys()), format_func=lambda x: opcje[x])
+        if st.button("Usuń przypisanie"):
+            c.execute("DELETE FROM harmonogram WHERE id = ?", (wpis_del,))
             conn.commit()
             st.rerun()
-        else:
-            st.error("Wypełnij wszystkie pola i wybierz co najmniej jeden etap!")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🗑️ Usuń wpis")
-wszystkie = pd.read_sql("SELECT * FROM wydarzenia ORDER BY data DESC", conn)
-if not wszystkie.empty:
-    opcje = {row['id']: f"{row['data']} | {row['nazwa']} ({row['osoba']} - {row['etap']})" for _, row in wszystkie.iterrows()}
-    wpis_del = st.sidebar.selectbox("Wybierz wpis do usunięcia", options=list(opcje.keys()), format_func=lambda x: opcje[x])
-    if st.sidebar.button("Usuń wybrany"):
-        c.execute("DELETE FROM wydarzenia WHERE id = ?", (wpis_del,))
-        conn.commit()
-        st.rerun()
+            
+    st.markdown("---")
+    st.markdown("### ⚠️ Usuń całe wydarzenie")
+    if not wszystkie_wyd.empty:
+        wyd_del = st.selectbox("Wybierz wydarzenie", options=list(wyd_dict.keys()), format_func=lambda x: wyd_dict[x], key="wyd_del")
+        if st.button("Usuń wydarzenie (skasuje też grafiki!)"):
+            c.execute("DELETE FROM wydarzenia WHERE id = ?", (wyd_del,))
+            c.execute("DELETE FROM harmonogram WHERE wydarzenie_id = ?", (wyd_del,))
+            conn.commit()
+            st.rerun()
