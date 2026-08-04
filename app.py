@@ -85,7 +85,7 @@ if not df.empty:
 
   filtered_df = df[
       (df["data"].dt.year == wybrany_rok)
-      & (df["data"].dt.month == wybrany_miesiac]
+      & (df["data"].dt.month == wybrany_miesiac)
   ]
 
   if not filtered_df.empty:
